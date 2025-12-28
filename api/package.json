@@ -4,7 +4,9 @@
     "dev": "bun run --hot src/index.ts"
   },
   "dependencies": {
-    "hono": "^4.11.3"
+    "@google/genai": "^1.34.0",
+    "hono": "^4.11.3",
+    "zod": "^4.2.1"
   },
   "devDependencies": {
     "@types/bun": "latest"

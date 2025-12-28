@@ -1,33 +1,107 @@
 import { useState } from 'react'
 import './App.css'
 
+const API_BASE_URL = 'http://localhost:3000'
+
 type Screen = 'upload' | 'review'
+
+// Types matching API response
+interface Evidence {
+  filePath: string
+  startLine?: number
+  endLine?: number
+}
+
+interface Finding {
+  id: string
+  status: 'PASS' | 'FAIL' | 'CLARIFY'
+  summary: string
+  reason?: string
+  suggestion?: string
+  evidence: Evidence[]
+  confidence: number
+  proposedComment: string
+  userDecision?: 'APPROVED' | 'DISMISSED' | 'EDITED'
+}
+
+interface ReviewResult {
+  prUrl: string
+  findings: Finding[]
+  talkScript?: string
+  draftComment?: string
+}
 
 function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('upload')
+  const [reviewResult, setReviewResult] = useState<ReviewResult | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleSubmit = () => {
-    // Navigate to review screen (functionality will be added later)
-    setCurrentScreen('review')
+  const handleSubmit = async (prUrl: string, file: File | null) => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('prUrl', prUrl)
+      if (file) {
+        formData.append('requirementFile', file)
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/submit-pr`, {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to review PR')
+      }
+
+      const result: ReviewResult = await response.json()
+      setReviewResult(result)
+      setCurrentScreen('review')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error occurred')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleBack = () => {
     setCurrentScreen('upload')
+    setReviewResult(null)
+    setError(null)
   }
 
   return (
     <div className="app-container">
       {currentScreen === 'upload' ? (
-        <UploadScreen onSubmit={handleSubmit} />
+        <UploadScreen
+          onSubmit={handleSubmit}
+          isLoading={isLoading}
+          error={error}
+        />
       ) : (
-        <ReviewScreen onBack={handleBack} />
+        <ReviewScreen
+          onBack={handleBack}
+          result={reviewResult}
+        />
       )}
     </div>
   )
 }
 
 // Screen 1: Upload Screen
-function UploadScreen({ onSubmit }: { onSubmit: () => void }) {
+function UploadScreen({
+  onSubmit,
+  isLoading,
+  error
+}: {
+  onSubmit: (prUrl: string, file: File | null) => void
+  isLoading: boolean
+  error: string | null
+}) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [prUrl, setPrUrl] = useState('')
 
@@ -40,12 +114,15 @@ function UploadScreen({ onSubmit }: { onSubmit: () => void }) {
 
   const handleRemoveFile = () => {
     setSelectedFile(null)
-    // Reset the file input
     const fileInput = document.getElementById('requirement-file') as HTMLInputElement
     if (fileInput) fileInput.value = ''
   }
 
-  const isSubmitDisabled = !prUrl.trim()
+  const handleSubmitClick = () => {
+    onSubmit(prUrl, selectedFile)
+  }
+
+  const isSubmitDisabled = !prUrl.trim() || isLoading
 
   return (
     <div className="screen upload-screen">
@@ -63,6 +140,7 @@ function UploadScreen({ onSubmit }: { onSubmit: () => void }) {
                 className="file-input"
                 accept=".pdf,.md,.txt,.doc,.docx"
                 onChange={handleFileChange}
+                disabled={isLoading}
               />
               {!selectedFile ? (
                 <label htmlFor="requirement-file" className="dropzone-content">
@@ -87,7 +165,7 @@ function UploadScreen({ onSubmit }: { onSubmit: () => void }) {
                     <span className="file-name">{selectedFile.name}</span>
                     <span className="file-size">({(selectedFile.size / 1024).toFixed(1)} KB)</span>
                   </div>
-                  <button type="button" className="remove-file-btn" onClick={handleRemoveFile}>
+                  <button type="button" className="remove-file-btn" onClick={handleRemoveFile} disabled={isLoading}>
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="18" x2="6" y1="6" y2="18" />
                       <line x1="6" x2="18" y1="6" y2="18" />
@@ -107,19 +185,41 @@ function UploadScreen({ onSubmit }: { onSubmit: () => void }) {
               placeholder="https://github.com/owner/repo/pull/123"
               value={prUrl}
               onChange={(e) => setPrUrl(e.target.value)}
+              disabled={isLoading}
             />
           </div>
 
+          {/* Error Message */}
+          {error && (
+            <div className="error-message">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" x2="12" y1="8" y2="12" />
+                <line x1="12" x2="12.01" y1="16" y2="16" />
+              </svg>
+              {error}
+            </div>
+          )}
+
           <button
             className="submit-btn"
-            onClick={onSubmit}
+            onClick={handleSubmitClick}
             disabled={isSubmitDisabled}
           >
-            <span>SUBMIT</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14" />
-              <path d="m12 5 7 7-7 7" />
-            </svg>
+            {isLoading ? (
+              <>
+                <span className="loading-spinner"></span>
+                <span>Analyzing...</span>
+              </>
+            ) : (
+              <>
+                <span>SUBMIT</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14" />
+                  <path d="m12 5 7 7-7 7" />
+                </svg>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -128,15 +228,26 @@ function UploadScreen({ onSubmit }: { onSubmit: () => void }) {
 }
 
 // Screen 2: Review Screen
-function ReviewScreen({ onBack }: { onBack: () => void }) {
+function ReviewScreen({
+  onBack,
+  result
+}: {
+  onBack: () => void
+  result: ReviewResult | null
+}) {
   const [isMicActive, setIsMicActive] = useState(false)
+  const [draftComment, setDraftComment] = useState(result?.draftComment || '')
+  const [findings, setFindings] = useState<Finding[]>(result?.findings || [])
 
-  // Mock findings data for UI display
-  const mockFindings = [
-    { id: 'F1', status: 'FAIL', summary: 'Missing input validation for user email' },
-    { id: 'F2', status: 'PASS', summary: 'Authentication flow implemented correctly' },
-    { id: 'F3', status: 'CLARIFY', summary: 'Unclear if pagination is required' },
-  ]
+  const handleFindingAction = (id: string, action: 'APPROVED' | 'DISMISSED') => {
+    setFindings(prev => prev.map(f =>
+      f.id === id ? { ...f, userDecision: action } : f
+    ))
+  }
+
+  const handleCopyComment = () => {
+    navigator.clipboard.writeText(draftComment)
+  }
 
   return (
     <div className="screen review-screen">
@@ -172,7 +283,7 @@ function ReviewScreen({ onBack }: { onBack: () => void }) {
             </svg>
           </div>
           <div className="voice-text">
-            <p>Oke, saya menemukan beberapa findings. Di file <strong>index.js line 531</strong>, ada function yang perlu di-review terkait validasi input...</p>
+            <p>{result?.talkScript || 'No review summary available.'}</p>
           </div>
           <button className="play-btn">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -185,60 +296,62 @@ function ReviewScreen({ onBack }: { onBack: () => void }) {
         <div className="review-main">
           {/* Findings Panel */}
           <div className="findings-panel">
-            <h3 className="panel-subtitle">Findings</h3>
+            <h3 className="panel-subtitle">Findings ({findings.length})</h3>
             <div className="findings-list">
-              {mockFindings.map((finding) => (
-                <div key={finding.id} className={`finding-item finding-${finding.status.toLowerCase()}`}>
-                  <div className="finding-header">
-                    <span className={`finding-status status-${finding.status.toLowerCase()}`}>
-                      {finding.status}
-                    </span>
-                    <span className="finding-id">{finding.id}</span>
-                  </div>
-                  <p className="finding-summary">{finding.summary}</p>
-                  <div className="finding-actions">
-                    <button className="action-btn approve">Approve</button>
-                    <button className="action-btn dismiss">Dismiss</button>
-                    <button className="action-btn edit">Edit</button>
-                  </div>
+              {findings.length === 0 ? (
+                <div className="no-findings">
+                  <p>✅ No issues found in this PR!</p>
                 </div>
-              ))}
+              ) : (
+                findings.map((finding) => (
+                  <div
+                    key={finding.id}
+                    className={`finding-item finding-${finding.status.toLowerCase()} ${finding.userDecision ? `decision-${finding.userDecision.toLowerCase()}` : ''}`}
+                  >
+                    <div className="finding-header">
+                      <span className={`finding-status status-${finding.status.toLowerCase()}`}>
+                        {finding.status}
+                      </span>
+                      <span className="finding-id">{finding.id}</span>
+                      <span className="finding-confidence">{Math.round(finding.confidence * 100)}%</span>
+                    </div>
+                    <p className="finding-summary">{finding.summary}</p>
+                    {finding.reason && (
+                      <p className="finding-reason">{finding.reason}</p>
+                    )}
+                    {finding.evidence.length > 0 && (
+                      <div className="finding-evidence">
+                        📁 {finding.evidence[0].filePath}
+                        {finding.evidence[0].startLine && ` (L${finding.evidence[0].startLine})`}
+                      </div>
+                    )}
+                    <div className="finding-actions">
+                      <button
+                        className={`action-btn approve ${finding.userDecision === 'APPROVED' ? 'active' : ''}`}
+                        onClick={() => handleFindingAction(finding.id, 'APPROVED')}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className={`action-btn dismiss ${finding.userDecision === 'DISMISSED' ? 'active' : ''}`}
+                        onClick={() => handleFindingAction(finding.id, 'DISMISSED')}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
-          {/* Diff Viewer Panel */}
+          {/* PR Info Panel */}
           <div className="diff-panel">
-            <h3 className="panel-subtitle">Diff Viewer</h3>
-            <div className="diff-viewer">
-              <div className="diff-file-header">
-                <span className="diff-filename">src/index.js</span>
-              </div>
-              <div className="diff-content">
-                <div className="diff-line diff-context">
-                  <span className="line-number">529</span>
-                  <span className="line-content">  const handleSubmit = async () =&gt; {'{'}</span>
-                </div>
-                <div className="diff-line diff-context">
-                  <span className="line-number">530</span>
-                  <span className="line-content">    const email = inputRef.current.value;</span>
-                </div>
-                <div className="diff-line diff-deletion">
-                  <span className="line-number">531</span>
-                  <span className="line-content">-   await submitForm(email);</span>
-                </div>
-                <div className="diff-line diff-addition highlight">
-                  <span className="line-number">531</span>
-                  <span className="line-content">+   if (!validateEmail(email)) return;</span>
-                </div>
-                <div className="diff-line diff-addition">
-                  <span className="line-number">532</span>
-                  <span className="line-content">+   await submitForm(email);</span>
-                </div>
-                <div className="diff-line diff-context">
-                  <span className="line-number">533</span>
-                  <span className="line-content">  {'}'}</span>
-                </div>
-              </div>
+            <h3 className="panel-subtitle">PR Info</h3>
+            <div className="pr-info">
+              <a href={result?.prUrl} target="_blank" rel="noopener noreferrer" className="pr-link">
+                {result?.prUrl}
+              </a>
             </div>
           </div>
         </div>
@@ -249,18 +362,12 @@ function ReviewScreen({ onBack }: { onBack: () => void }) {
           <div className="draft-content">
             <textarea
               className="draft-textarea"
-              defaultValue={`## PR Review Summary
-
-### ❌ FAIL: Missing input validation
-- File: src/index.js (line 531)
-- Suggestion: Add email validation before form submission
-
-### ✅ PASS: Authentication flow
-- Implemented correctly per requirements`}
-              rows={6}
+              value={draftComment}
+              onChange={(e) => setDraftComment(e.target.value)}
+              rows={8}
             />
             <div className="draft-actions">
-              <button className="copy-btn">
+              <button className="copy-btn" onClick={handleCopyComment}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
                   <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
